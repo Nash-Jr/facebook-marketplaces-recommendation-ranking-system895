@@ -23,3 +23,17 @@ Facebook Marketplace is a platform for buying and selling products on Facebook. 
 1. Clone the repository: `git clone https://github.com/Nash-Jr/facebook-marketplaces-recommendation-ranking-system895`
 2. Install the required dependencies: 'Will add soon'.
 4. Train the machine learning models: `python train_models.py`
+
+
+## Contributing
+
+Contributions are welcome! Please follow the guidelines in the [CONTRIBUTING.md](CONTRIBUTING.md) file.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+## Acknowledgments
+
+- The Facebook Marketplace team for inspiring this project.
+- The open-source communities behind the technologies used in this project.
