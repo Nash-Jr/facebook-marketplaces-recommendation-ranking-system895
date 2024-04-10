@@ -6,7 +6,7 @@ from Image_Dataset import ImageDataset
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 import os
-
+import numpy as np
 
 data_augmentation = transforms.Compose([
     transforms.RandomHorizontalFlip(p=0.5),
@@ -50,25 +50,33 @@ val_loader = torch.utils.data.DataLoader(
 writer = SummaryWriter(
     r"C:\Users\nacho\New folder\AiCore\Facebook_Project\SummaryWriter")
 
-resnet50 = models.resnet50(pretrained=True)
 
 resnet50 = models.resnet50(pretrained=True)
-for param in resnet50.parameters():
-    param.requires_grad = False
-for param in resnet50.layer3.parameters():
-    param.requires_grad = True
-for param in resnet50.layer4.parameters():
-    param.requires_grad = True
-for param in resnet50.fc.parameters():
-    param.requires_grad = True
-
-
+feature_model = nn.Sequential(*list(resnet50.children())[:-1])
 num_features = resnet50.fc.in_features
-num_categories = len(dataset.label_decoder)
-resnet50.fc = nn.Linear(num_features, num_categories)
+feature_model.add_module('fc', nn.Linear(num_features, 1000))
+
+for param in feature_model.parameters():
+    param.requires_grad = False
+
+all_features = []
+all_labels = []
 
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(resnet50.fc.parameters(), lr=0.002)
+
+for inputs, labels in train_loader:
+    features = feature_model(inputs).detach().cpu().numpy()
+    all_features.append(features)
+    all_labels.append(labels)
+
+all_features = np.concatenate(all_features, axis=0)
+all_labels = np.concatenate(all_labels, axis=0)
+
+final_model_folder = r"C:\Users\nacho\New folder\AiCore\Facebook_Project\final_model"
+os.makedirs(final_model_folder, exist_ok=True)
+torch.save(feature_model.state_dict(), os.path.join(
+    final_model_folder, 'image_model.pt'))
 
 num_epochs = 10
 
