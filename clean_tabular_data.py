@@ -1,7 +1,7 @@
 import pandas as pd
 import csv
 import re
-# csv into Dataframe
+
 images_df = pd.read_csv(
     r"C:\Users\nacho\New folder\AiCore\Facebook_Project\Images.csv")
 
