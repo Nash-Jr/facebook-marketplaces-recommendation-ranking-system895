@@ -1,73 +1,177 @@
-import json
-import numpy as np
-import faiss
-from feature_extraction_model import feature_model, dataset
-import torch
 import os
-from clean_images import check_image_channels, resize_image
-from PIL import Image, UnidentifiedImageError
-from torchvision import transforms
-import pickle
+import torch
+import torch.nn as nn
+from torchvision import models, transforms
+import faiss
+import numpy as np
+from PIL import Image
+import json
+from matplotlib import pyplot as plt
 
-with open('image_embeddings.json', 'r') as f:
-    image_embeddings = json.load(f)
-
-embeddings = np.array([emb for emb in image_embeddings.values()])
-
-index = faiss.IndexFlatL2(embeddings.shape[1])
-index.add(embeddings)
-
-normalize_transform = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
-def clean_and_preprocess_image(image_path, final_size=224):
+def create_feature_model():
+    resnet50 = models.resnet50(pretrained=False)
+    num_features = resnet50.fc.in_features
+    resnet50.fc = nn.Sequential(
+        nn.Linear(num_features, 1024),  # Hidden layer
+        nn.ReLU(),
+        nn.Dropout(0.2),
+        nn.Linear(1024, 2048)  # Output layer matching FAISS index dimension
+    )
+    return resnet50
+
+
+def load_model(model_path):
+    model = create_feature_model()
     try:
-        with Image.open(image_path) as img:
-            img = check_image_channels(img)
-            img = resize_image(final_size, img)
-            image_tensor = transforms.ToTensor()(img)
-            image_tensor = normalize_transform(image_tensor)
-            return image_tensor
-    except (IOError, OSError, ValueError, UnidentifiedImageError):
-        print(f"Skipping non-image file: {image_path}")
-        return None
+        state_dict = torch.load(model_path)
+        model.load_state_dict(state_dict)
+        print("Successfully loaded model weights")
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        print("Using model with randomly initialized weights.")
+    return model
 
 
-def extract_image_features(image_path):
-    image = clean_and_preprocess_image(image_path)
-    if image is not None:
-        with torch.no_grad():
-            features = feature_model(image.unsqueeze(
-                0)).detach().cpu().numpy().squeeze()
-        return features
-    else:
-        return None
+# Set up paths
+current_directory = os.path.dirname(os.path.abspath(__file__))
+model_filename = "checkpoint.pt"
+model_path = os.path.join(current_directory, model_filename)
+index_path = os.path.join(current_directory, "index.faiss")
+
+# Load the model
+feature_model = load_model(model_path)
+feature_model.eval()
+
+# Print model summary
+print("\nModel Summary:")
+print(feature_model)
+
+# Print number of trainable parameters
+total_params = sum(p.numel()
+                   for p in feature_model.parameters() if p.requires_grad)
+print(f"\nTotal trainable parameters: {total_params}")
 
 
-def search_similar_images(query_image_directory, top_k=5):
-    similar_image_ids = []
-    for filename in os.listdir(query_image_directory):
-        if filename.endswith(".jpg") or filename.endswith(".png"):
-            query_image_path = os.path.join(query_image_directory, filename)
-            query_embedding = extract_image_features(query_image_path)
-            if query_embedding is not None:
-                distances, indices = index.search(
-                    query_embedding.reshape(1, -1), top_k)
-                similar_ids = [list(image_embeddings.keys())[idx]
-                               for idx in indices[0]]
-                similar_image_ids.append((filename, similar_ids))
-    return similar_image_ids
+def extract_features(image_path):
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[
+                             0.229, 0.224, 0.225])
+    ])
+
+    image = Image.open(image_path).convert('RGB')
+    image = transform(image).unsqueeze(0)
+
+    with torch.no_grad():
+        features = feature_model(image)
+
+    return features.cpu().numpy().flatten()
 
 
-final_model_path = r"C:\Users\nacho\New folder\AiCore\Facebook_Project\final_model"
-with open(os.path.join(final_model_path, 'image_decoder.pkl'), 'rb') as f:
-    label_decoder = pickle.load(f)
-query_image_directory = r"C:\Users\nacho\New folder\AiCore\Facebook_Project\Cleaned_images"
-similar_image_ids = search_similar_images(query_image_directory, top_k=5)
-for query_image, similar_ids in similar_image_ids:
-    print(f"Query image: {query_image}")
-    print(f"Similar image IDs: {similar_ids}")
-    for similar_id in similar_ids:
-        label = label_decoder[image_embeddings[similar_id]['label']]
-        print(f"Image ID: {similar_id}, Label: {label}")
-    print()
+def load_large_embedding_arrays(file_path):
+    embeddings = []
+    try:
+        with open(file_path, 'r') as f:
+            content = f.read()
+
+        # Fixing the structure by wrapping in a list and splitting objects correctly
+        fixed_content = "[" + content.replace("}{", "},{") + "]"
+
+        # Load the entire content as a JSON object
+        data = json.loads(fixed_content)
+
+        # Iterate over each key, value pair in the JSON objects
+        for item in data:
+            for key, value in item.items():
+                if isinstance(value, list) and all(isinstance(v, (int, float)) for v in value):
+                    embeddings.append(np.array(value))
+                else:
+                    print(f"Skipping invalid embedding for key {key}: {value}")
+
+    except (ValueError, json.JSONDecodeError) as e:
+        print(f"Error loading JSON: {e}")
+        print(f"Problematic content: {content[:500]}...")
+
+    return embeddings
+
+
+def normalize_embeddings(embeddings):
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    return embeddings / norms
+
+
+# Load the embeddings file
+embeddings_path = os.path.join(current_directory, 'image_embeddings.json')
+embeddings = load_large_embedding_arrays(embeddings_path)
+
+if not embeddings:
+    print("Failed to load image embeddings. Please check the file.")
+    exit(1)
+
+# Prepare data for FAISS
+image_ids = [f"embedding_{i}" for i in range(len(embeddings))]
+embeddings_array = np.array(embeddings).astype('float32')
+
+# Normalize embeddings
+embeddings_array = normalize_embeddings(embeddings_array)
+
+# Create FAISS index
+dimension = embeddings_array.shape[1]  # Dimensionality of the embeddings
+index = faiss.IndexFlatL2(dimension)
+index.add(embeddings_array)
+
+faiss.write_index(index, index_path)
+print(f"FAISS index saved to {index_path}")
+
+
+def search_similar_images(query_image_path, top_k=5):
+    query_features = extract_features(query_image_path)
+
+    # Normalize query features
+    query_features = normalize_embeddings(query_features.reshape(1, -1))
+
+    # Debugging: Print dimensions of query features and FAISS index
+    print(f"Query features shape: {query_features.shape}")
+    print(f"FAISS index dimension: {index.d}")
+
+    distances, indices = index.search(query_features, top_k)
+
+    similar_images = [image_ids[i] for i in indices[0]]
+    return similar_images, distances[0]
+
+
+# Example usage
+query_image_path = r"C:\Users\nacho\New folder\AiCore\Facebook_Project\Cleaned_images\00b75a5a-8270-440b-90da-cd2841368acf.jpg"
+similar_images, distances = search_similar_images(query_image_path)
+
+print("Similar images:")
+for image_id, distance in zip(similar_images, distances):
+    print(f"Image ID: {image_id}, Distance: {distance}")
+
+# Load mapping of embedding IDs to filenames
+mapping_path = os.path.join(current_directory, 'id_to_filename.json')
+with open(mapping_path, 'r') as f:
+    id_to_filename = json.load(f)
+
+
+def display_images(image_paths, titles=None):
+    fig, axes = plt.subplots(1, len(image_paths), figsize=(15, 5))
+    for i, image_path in enumerate(image_paths):
+        image = Image.open(image_path)
+        axes[i].imshow(image)
+        if titles:
+            axes[i].set_title(titles[i])
+        axes[i].axis('off')
+    plt.show()
+
+
+# Visualize results
+image_dir = r"C:\\Users\\nacho\\New folder\\AiCore\\Facebook_Project\\Cleaned_images"
+similar_image_paths = [os.path.join(
+    image_dir, id_to_filename[img_id]) for img_id in similar_images]
+display_images([query_image_path] + similar_image_paths, ["Query"] +
+               [f"Similar {i+1}" for i in range(len(similar_images))])
