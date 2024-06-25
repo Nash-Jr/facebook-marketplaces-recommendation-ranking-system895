@@ -1,6 +1,5 @@
 import io
 import json
-import pickle
 import numpy as np
 from PIL import Image
 from fastapi.responses import JSONResponse
@@ -28,27 +27,27 @@ app = FastAPI()
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(current_directory, "checkpoint.pt")
-decoder_path = os.path.join(current_directory, "image_decoder.pkl")
 index_path = os.path.join(current_directory, "index.faiss")
 id_to_filename_path = os.path.join(current_directory, "id_to_filename.json")
+embeddings_path = os.path.join(current_directory, "embeddings.npz")
 
-with open(decoder_path, "rb") as f:
-    decoder = pickle.load(f)
-logger.debug(f"Sample of decoder contents: {list(decoder.items())[:5]}")
-logger.debug(f"Number of entries in decoder: {len(decoder)}")
-
+# Load FAISS index
 index = faiss.read_index(index_path)
 logger.debug(f"Loaded FAISS index with dimension: {index.d}")
 logger.debug(f"FAISS index size: {index.ntotal}")
 
+# Load id_to_filename mapping
 with open(id_to_filename_path, "r") as f:
     id_to_filename = json.load(f)
 logger.debug(f"Number of entries in id_to_filename: {len(id_to_filename)}")
 logger.debug(
     f"Sample of id_to_filename mapping: {list(id_to_filename.items())[:5]}")
 
-max_index = max(int(key.split('_')[1]) for key in id_to_filename.keys())
-logger.debug(f"Highest index in id_to_filename: {max_index}")
+# Load embeddings
+embeddings_data = np.load(embeddings_path)
+embeddings = embeddings_data['embeddings']
+filenames = embeddings_data['filenames']
+logger.debug(f"Loaded {len(embeddings)} embeddings")
 
 
 def create_feature_model(num_classes=13):
@@ -145,35 +144,27 @@ async def predict_combined(image: UploadFile = File(...), top_k: int = Form(5)):
         logger.debug(f"Distances: {distances}")
 
         similar_images = []
-        similar_labels = []
         valid_distances = []
         missed_indices = []
 
         for idx, distance in zip(indices[0], distances[0]):
-            str_idx = f"embedding_{idx}"
-            if str_idx in id_to_filename:
-                similar_images.append(id_to_filename[str_idx])
-                similar_labels.append(decoder.get(int(idx), "Unknown"))
+            if idx < len(filenames):
+                similar_images.append(filenames[idx])
                 valid_distances.append(float(distance))
             else:
-                logger.warning(
-                    f"Index {idx} not found in id_to_filename mapping")
+                logger.warning(f"Index {idx} out of range for filenames")
                 missed_indices.append(int(idx))
                 similar_images.append(f"missing_image_{idx}.jpg")
-                similar_labels.append("Unknown")
                 valid_distances.append(float(distance))
 
         response_content = {
             "similar_images": similar_images,
-            "similar_labels": similar_labels,
             "distances": valid_distances,
             "missed_indices": missed_indices
         }
 
         logger.info(f"Number of similar images found: {len(similar_images)}")
         logger.debug(f"Response content: {response_content}")
-        logger.debug(
-            f"Keys in id_to_filename: {list(id_to_filename.keys())[:10]}")
         logger.debug(f"Missed indices: {missed_indices}")
 
         return JSONResponse(content=response_content)

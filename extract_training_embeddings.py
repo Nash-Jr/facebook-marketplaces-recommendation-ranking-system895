@@ -2,23 +2,20 @@ import os
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
-import faiss
 import numpy as np
 from PIL import Image
 import json
-from matplotlib import pyplot as plt
-
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+from tqdm import tqdm
 
 
 def create_feature_model():
     resnet50 = models.resnet50(pretrained=False)
     num_features = resnet50.fc.in_features
     resnet50.fc = nn.Sequential(
-        nn.Linear(num_features, 1024),  # Hidden layer
+        nn.Linear(num_features, 1024),
         nn.ReLU(),
         nn.Dropout(0.2),
-        nn.Linear(1024, 2048)  # Output layer matching FAISS index dimension
+        nn.Linear(1024, 2048)
     )
     return resnet50
 
@@ -35,26 +32,15 @@ def load_model(model_path):
     return model
 
 
-# Set up paths
-current_directory = os.path.dirname(os.path.abspath(__file__))
-model_filename = "checkpoint.pt"
-model_path = os.path.join(current_directory, model_filename)
-
-# Load the model
-feature_model = load_model(model_path)
-feature_model.eval()
-
-# Print model summary
-print("\nModel Summary:")
-print(feature_model)
-
-# Print number of trainable parameters
-total_params = sum(p.numel()
-                   for p in feature_model.parameters() if p.requires_grad)
-print(f"\nTotal trainable parameters: {total_params}")
+def extract_features(model, image_path, transform):
+    image = Image.open(image_path).convert('RGB')
+    image = transform(image).unsqueeze(0)
+    with torch.no_grad():
+        features = model(image)
+    return features.cpu().numpy().flatten()
 
 
-def extract_features(image_path):
+def process_images_batch(model, image_dir, batch_size=32, output_file='embeddings.npz'):
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -62,126 +48,56 @@ def extract_features(image_path):
                              0.229, 0.224, 0.225])
     ])
 
-    image = Image.open(image_path).convert('RGB')
-    image = transform(image).unsqueeze(0)
+    image_files = [f for f in os.listdir(
+        image_dir) if f.endswith(('.jpg', '.jpeg', '.png'))]
+    total_batches = (len(image_files) + batch_size - 1) // batch_size
 
-    with torch.no_grad():
-        features = feature_model(image)
-
-    return features.cpu().numpy().flatten()
-
-
-def load_large_embedding_arrays(file_path):
     embeddings = []
-    try:
-        with open(file_path, 'r') as f:
-            content = f.read()
+    filenames = []
 
-        # Fixing the structure by wrapping in a list and splitting objects correctly
-        fixed_content = "[" + content.replace("}{", "},{") + "]"
+    model.eval()
+    if torch.cuda.is_available():
+        model = model.cuda()
 
-        # Load the entire content as a JSON object
-        data = json.loads(fixed_content)
+    for i in tqdm(range(0, len(image_files), batch_size), total=total_batches, desc="Processing batches"):
+        batch_files = image_files[i:i+batch_size]
+        batch_embeddings = []
 
-        # Iterate over each key, value pair in the JSON objects
-        for item in data:
-            for key, value in item.items():
-                if isinstance(value, list) and all(isinstance(v, (int, float)) for v in value):
-                    embeddings.append(np.array(value))
-                else:
-                    print(f"Skipping invalid embedding for key {key}: {value}")
+        for img_file in batch_files:
+            img_path = os.path.join(image_dir, img_file)
+            embedding = extract_features(model, img_path, transform)
+            batch_embeddings.append(embedding)
+            filenames.append(img_file)
 
-    except (ValueError, json.JSONDecodeError) as e:
-        print(f"Error loading JSON: {e}")
-        print(f"Problematic content: {content[:500]}...")
+        embeddings.extend(batch_embeddings)
 
-    return embeddings
+        # Save intermediate results every 10 batches
+        if (i // batch_size + 1) % 10 == 0:
+            np.savez_compressed(
+                output_file,
+                embeddings=np.array(embeddings),
+                filenames=np.array(filenames)
+            )
+            print(
+                f"Saved intermediate results. Processed {len(embeddings)} images so far.")
 
-
-def normalize_embeddings(embeddings):
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    return embeddings / norms
-
-
-# Load the embeddings file
-embeddings_path = os.path.join(current_directory, 'image_embeddings.json')
-embeddings = load_large_embedding_arrays(embeddings_path)
-
-if not embeddings:
-    print("Failed to load image embeddings. Please check the file.")
-    exit(1)
-
-# Prepare data for FAISS
-image_ids = [f"embedding_{i}" for i in range(len(embeddings))]
-embeddings_array = np.array(embeddings).astype('float32')
-
-# Normalize embeddings
-embeddings_array = normalize_embeddings(embeddings_array)
-
-# Create FAISS index
-dimension = embeddings_array.shape[1]  # Dimensionality of the embeddings
-index = faiss.IndexFlatL2(dimension)
-index.add(embeddings_array)
+    # Save final results
+    np.savez_compressed(
+        output_file,
+        embeddings=np.array(embeddings),
+        filenames=np.array(filenames)
+    )
+    print(f"Finished processing. Total images processed: {len(embeddings)}")
 
 
-def search_similar_images(query_image_path, top_k=5):
-    query_features = extract_features(query_image_path)
+current_directory = os.path.dirname(os.path.abspath(__file__))
+model_filename = "checkpoint.pt"
+model_path = os.path.join(current_directory, model_filename)
 
-    # Normalize query features
-    query_features = normalize_embeddings(query_features.reshape(1, -1))
+# Load the model
+feature_model = load_model(model_path)
 
-    # Debugging: Print dimensions of query features and FAISS index
-    print(f"Query features shape: {query_features.shape}")
-    print(f"FAISS index dimension: {index.d}")
-
-    distances, indices = index.search(query_features, top_k)
-
-    similar_images = [image_ids[i] for i in indices[0]]
-    return similar_images, distances[0]
-
-
-# Example usage
-query_image_path = r"C:\Users\nacho\New folder\AiCore\Facebook_Project\Cleaned_images\ed5ff7dc-8e7b-44b1-927f-3dcd3a5ffd41.jpg"
-similar_images, distances = search_similar_images(query_image_path)
-
-print("Similar images:")
-for image_id, distance in zip(similar_images, distances):
-    print(f"Image ID: {image_id}, Distance: {distance}")
-
-# Load mapping of embedding IDs to filenames
-mapping_path = os.path.join(current_directory, 'id_to_filename.json')
-with open(mapping_path, 'r') as f:
-    id_to_filename = json.load(f)
-
-
-def display_images(image_paths, titles=None):
-    fig, axes = plt.subplots(1, len(image_paths), figsize=(15, 5))
-    if len(image_paths) == 1:
-        axes = [axes]  # Ensure axes is always iterable
-
-    for i, image_path in enumerate(image_paths):
-        image = Image.open(image_path)
-        axes[i].imshow(image)
-        if titles:
-            axes[i].set_title(titles[i])
-        axes[i].axis('off')
-    plt.show()
-
-
-# Visualize results
-image_dir = r"C:\\Users\\nacho\\New folder\\AiCore\\Facebook_Project\\Cleaned_images"
-similar_image_paths = []
-
-for img_id in similar_images:
-    try:
-        similar_image_paths.append(os.path.join(
-            image_dir, id_to_filename[img_id]))
-    except KeyError:
-        print(f"Warning: {img_id} not found in mapping.")
-
-# Ensure at least one image path is available to avoid errors
-if similar_image_paths:
-    display_images([query_image_path] + similar_image_paths, ["Query"] +
-                   [f"Similar {i+1}" for i in range(len(similar_image_paths))])
-else:
-    print("No similar images found in the mapping.")
+# Set image directory and process images
+image_dir = r"C:\Users\nacho\New folder\AiCore\Facebook_Project\Cleaned_images"
+process_images_batch(feature_model, image_dir,
+                     batch_size=32, output_file='embeddings.npz')

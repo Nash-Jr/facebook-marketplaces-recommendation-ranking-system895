@@ -116,7 +116,6 @@ if not embeddings:
 image_ids = [f"embedding_{i}" for i in range(len(embeddings))]
 embeddings_array = np.array(embeddings).astype('float32')
 
-# Normalize embeddings
 embeddings_array = normalize_embeddings(embeddings_array)
 
 # Create FAISS index
@@ -131,7 +130,6 @@ print(f"FAISS index saved to {index_path}")
 def search_similar_images(query_image_path, top_k=5):
     query_features = extract_features(query_image_path)
 
-    # Normalize query features
     query_features = normalize_embeddings(query_features.reshape(1, -1))
 
     # Debugging: Print dimensions of query features and FAISS index
@@ -169,7 +167,7 @@ def display_images(image_paths, titles=None):
     plt.show()
 
 
-# Visualize results
+# Visualise results
 image_dir = r"C:\\Users\\nacho\\New folder\\AiCore\\Facebook_Project\\Cleaned_images"
 similar_image_paths = [os.path.join(
     image_dir, id_to_filename[img_id]) for img_id in similar_images]

@@ -49,7 +49,6 @@ class ImageDataset(torch.utils.data.Dataset):
         return image, label, image_id
 
 
-# Initialize and save the dataset
 annotations_file_path = r"C:\Users\nacho\New folder\AiCore\Facebook_Project\training_data.csv"
 image_directory = r"C:\Users\nacho\New folder\AiCore\Facebook_Project\Cleaned_images"
 save_path = r"C:\Users\nacho\New folder\AiCore\Facebook_Project\saved_dataset.pth"
