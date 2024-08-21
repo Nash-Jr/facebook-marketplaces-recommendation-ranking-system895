@@ -16,14 +16,14 @@ Ranking and Personalisation: In addition to visual similarity, the system consid
 
 API Integration: The project includes a FastAPI-based web application that exposes the recommendation system as a RESTful API. This allows the system to be easily integrated into the larger Facebook Marketplace infrastructure or used as a standalone product search and recommendation service.
 
-##Key Features
+## Key Features
 
 Efficient Image Feature Extraction: The system uses a pre-trained deep learning model to extract visual features from product images, enabling fast and accurate representation of product characteristics.
 Scalable Similarity Search: The FAISS library is used to build a highly optimised index for the extracted image features, allowing for efficient nearest-neighbour search and retrieval of similar product listings.
 Personalized Recommendations: The system considers various user and marketplace signals to rank the search results and provide personalised recommendations that are tailored to the user's preferences and behaviour.
 RESTful API: The recommendation system is exposed as a RESTful API using FastAPI, making it easy to integrate into larger applications or use as a standalone service.
 
-##Technical Stack
+## Technical Stack
 
 Python: The primary programming language for the project.
 PyTorch: Used for building and fine-tuning the deep learning model for image feature extraction.
