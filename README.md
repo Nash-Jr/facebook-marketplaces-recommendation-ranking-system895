@@ -9,8 +9,11 @@ Facebook Marketplace is a popular platform that allows users to buy and sell a w
 This project aims to replicate the core functionality of the Facebook Marketplace recommendation system. It involves the following key component
 
 Image Feature Extraction: The system uses a pre-trained deep learning model, such as ResNet-50, to extract visual features from product images. These features are used to represent the visual characteristics of each product listing.
+
 Similarity Search: The extracted image features are stored in a highly optimized index using the FAISS library. When a user searches for a product, the system extracts the features of the query image and performs a nearest-neighbour search to find the most visually similar product listings.
+
 Ranking and Personalisation: In addition to visual similarity, the system considers other factors, such as user preferences, browsing history, and marketplace activity, to rank the search results and provide personalized recommendations to each user.
+
 API Integration: The project includes a FastAPI-based web application that exposes the recommendation system as a RESTful API. This allows the system to be easily integrated into the larger Facebook Marketplace infrastructure or used as a standalone product search and recommendation service.
 
 ##Key Features
